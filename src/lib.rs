@@ -1,15 +1,18 @@
 use std::thread;
 use std::sync::mpsc;
 use std::thread::JoinHandle;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+use std::sync::mpsc::{Sender, Receiver};
 
 #[derive(Clone)]
 pub struct Logger {
     sender: mpsc::Sender<LogItem>
 }
 
+#[allow(dead_code)]
 pub struct Log {
-    handler: JoinHandle<()>
+    handler: JoinHandle<()>,
+    logger: Logger
 }
 
 pub struct LogItem {
@@ -52,35 +55,50 @@ impl Logger {
             sender
         }
     }
+    
+    pub fn log(&self, item:LogItem) -> Result<(), &'static str> {
+        match self.sender.send(item) {
+            Ok(_) => Ok(()),
+            Err(_) => Err("Could not write to log.")
+        }
+    }
+    
+    pub fn log_info(&self, from: String, message: String) -> Result<(), &'static str> {
+        self.log(LogItem::info(from, message))
+    }
 
-    pub fn log(&self, item:LogItem) {
-        self.sender.send(item);
+    pub fn log_success(&self, from: String, message: String) -> Result<(), &'static str> {
+        self.log(LogItem::success(from, message))
+    }
+
+    pub fn log_error(&self, from: String, message: String) -> Result<(), &'static str> {
+        self.log(LogItem::error(from, message))
+    }
+
+    pub fn log_warning(&self, from: String, message: String) -> Result<(), &'static str> {
+        self.log(LogItem::warning(from, message))
+    }
+
+    pub fn log_debug(&self, from: String, message: String) -> Result<(), &'static str> {
+        self.log(LogItem::debug(from, message))
     }
 }
 
 impl Log {
-    pub fn create(receiver: mpsc::Receiver<LogItem>) -> Result<Log, &'static str> {
+    
+    pub fn create() -> Result<Log, &'static str> {
 
+        let (sender , receiver) : (Sender<LogItem>, Receiver<LogItem>) = mpsc::channel();
+        
+        let logger = Logger::create(sender);
+        
         ConsoleColor::White.set_foreground();
         println!("[{} info  ] {} {}", Utc::now().format("%F %H:%M:%S%.3f"), "logger", "Starting...");
         ConsoleColor::reset();
 
         let handler = thread::spawn(move || loop {
             let item = receiver.recv().unwrap();
-
-            let (color, name) = match item.item_type {
-                LogItemType::Information => (ConsoleColor::White, "info  "),
-                LogItemType::Success => (ConsoleColor::Green, "ok    "),
-                LogItemType::Error => (ConsoleColor::Red, "error "),
-                LogItemType::Warning => (ConsoleColor::Yellow, "warn  "),
-                LogItemType::Debug => (ConsoleColor::MagentaBright, "debug "),
-            };
-
-            color.set_foreground();
-
-            println!("[{} {}] {} {}", Utc::now().format("%F %H:%M:%S%.3f"), name, item.from, item.message);
-            ConsoleColor::reset();
-
+            item.print();
         });
 
 
@@ -88,12 +106,41 @@ impl Log {
         println!("[{} ok    ] {} {}", Utc::now().format("%F %H:%M:%S%.3f"), "logger", "Started successfully");
         ConsoleColor::reset();
 
-        Ok(Log { handler })
+        Ok(Log { handler, logger })
+    }
+    
+    pub fn get_logger(&self) -> Logger {
+        self.logger.clone()
+    }
+    
+    /// A static method to create and print a `info` log message.
+    pub fn print_info(from: String, message: String) {
+        LogItem::info(from, message).print()
+    }
+    
+    /// A static method to create and print a `success` log message.
+    pub fn print_success(from: String, message: String) {
+        LogItem::success(from, message).print()
+    }
+
+    /// A static method to create and print a `error` log message.
+    pub fn print_error(from: String, message: String) {
+        LogItem::error(from, message).print()
+    }
+
+    /// A static method to create and print a `warning` log message.
+    pub fn print_warning(from: String, message: String) {
+        LogItem::warning(from, message).print()
+    }
+
+    /// A static method to create and print a `debug` log message.
+    pub fn print_debug(from: String, message: String) {
+        LogItem::debug(from, message).print()
     }
 }
 
 impl LogItem {
-
+    
     pub fn info(from: String, message: String) -> LogItem {
         LogItem::create_item(from, message, LogItemType::Information)
     }
@@ -117,8 +164,22 @@ impl LogItem {
     fn create_item(from: String, message: String, item_type: LogItemType) -> LogItem {
         LogItem { from, message, item_type }
     }
-}
+    
+    pub(crate) fn print(&self) {
+        let (color, name) = match &self.item_type {
+            LogItemType::Information => (ConsoleColor::White, "info  "),
+            LogItemType::Success => (ConsoleColor::Green, "ok    "),
+            LogItemType::Error => (ConsoleColor::Red, "error "),
+            LogItemType::Warning => (ConsoleColor::Yellow, "warn  "),
+            LogItemType::Debug => (ConsoleColor::MagentaBright, "debug "),
+        };
 
+        color.set_foreground();
+
+        println!("[{} {}] {} {}", Utc::now().format("%F %H:%M:%S%.3f"), name, &self.from, &self.message);
+        ConsoleColor::reset();
+    }
+}
 
 impl ConsoleColor {
 
